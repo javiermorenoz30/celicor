@@ -7,7 +7,7 @@ let cart=[];
 try{const saved=JSON.parse(localStorage.getItem('celicor-cart')||'[]');cart=Array.isArray(saved)?saved:[]}catch(e){localStorage.removeItem('celicor-cart')}
 cart=cart.filter(x=>x&&Number.isFinite(+x.id)&&Number.isFinite(+x.qty)&&+x.qty>0).map(x=>({id:+x.id,qty:+x.qty}));
 
-// The repository sprite is 1280x1408: 10 columns x 11 rows, 128px per source cell.
+// Repository sprite: 1280x1408 = 10 columns x 11 rows of 128px source cells.
 const spriteStyle=id=>{const n=Number(id)-1;return `--sx:${n%10};--sy:${Math.floor(n/10)}`};
 function toast(text){const el=$('#toast');if(!el)return;el.textContent=text;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1800)}
 function sessionId(){let id=localStorage.getItem('celicor-session');if(!id){id=crypto.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('celicor-session',id)}return id}
@@ -28,10 +28,8 @@ async function sendOrder(e){e.preventDefault();const fd=new FormData(e.currentTa
 
 function imageLoads(src){return new Promise((ok,fail)=>{const img=new Image();img.onload=()=>ok(src);img.onerror=fail;img.src=src})}
 async function loadSprite(){
-  // Prefer the generated binary when GitHub Actions has built it.
   const direct='assets/products-sprite.webp?v=10';
   try{await imageLoads(direct);document.documentElement.style.setProperty('--sprite',`url("${direct}")`);return true}catch(e){}
-  // Fallback: rebuild the first valid RIFF WebP in-browser from the repo chunks.
   try{
     const files=Array.from({length:14},(_,i)=>`assets/products-sprite128/part-${String(i).padStart(2,'0')}.txt?v=10`);
     const parts=await Promise.all(files.map(u=>fetch(u,{cache:'force-cache'}).then(r=>{if(!r.ok)throw Error(u);return r.text()})));
@@ -42,6 +40,7 @@ async function loadSprite(){
     const fileSize=riffSize+8;
     const needed=Math.ceil(fileSize/3)*4;
     const raw=atob(all.slice(0,needed));
+    if(raw.length<fileSize)throw Error('Sprite incompleto');
     const bytes=new Uint8Array(fileSize);
     for(let i=0;i<fileSize;i++)bytes[i]=raw.charCodeAt(i);
     const blob=new Blob([bytes],{type:'image/webp'});
@@ -53,10 +52,7 @@ async function loadSprite(){
 }
 async function loadSite(){try{site=await fetch('data/site.json?v=10',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('site');return r.json()});const h=$('.hero');if(h&&site.hero){if(h.querySelector('.eyebrow'))h.querySelector('.eyebrow').textContent=site.hero.eyebrow||h.querySelector('.eyebrow').textContent;if(h.querySelector('h1'))h.querySelector('h1').innerHTML=`${site.hero.titleLine1||'Elegancia para'}<br><em>${site.hero.titleLine2||'cada brindis.'}</em>`;if(h.querySelector('p'))h.querySelector('p').textContent=site.hero.description||h.querySelector('p').textContent;const btn=h.querySelectorAll('.heroBtns a');if(btn[0])btn[0].textContent=site.hero.primaryCta||btn[0].textContent;if(btn[1])btn[1].textContent=site.hero.secondaryCta||btn[1].textContent}const ch=$('.catalog .sectionHead h2');if(ch&&site.catalog?.headline)ch.textContent=site.catalog.headline}catch(e){site={}}}
 async function loadProducts(){const parts=await Promise.all(['data/rones-1.json','data/rones-2.json','data/rones-3.json','data/rones-4.json'].map(u=>fetch(u+'?v=10',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error(u);return r.json()})));products=parts.flat().map((p,i)=>({...p,id:i+1}));renderChips();renderProducts();renderCart()}
-function bind(){if($('#search'))$('#search').oninput=renderProducts;if($('#sort'))$('#sort').onchange=renderProducts;if($('#cartOpen'))$('#cartOpen').onclick=openCart;if($('#cartClose'))$('#cartClose').onclick=()=>closeOverlay('#cartOverlay');if($('#cartShade'))$('#cartShade').onclick=()=>closeOverlay('#cartOverlay');if($('#checkoutBtn'))$('#checkoutBtn').onclick=makeOrder;if($('#checkoutClose'))$('#checkoutClose').onclick=()=>closeOverlay('#checkoutOverlay');if($('#checkoutShade'))$('#checkoutShade').onclick=()=>closeOverlay('#checkoutOverlay');if($('#checkoutForm'))$('#checkoutForm').onsubmit=sendOrder;if($('#yes'))$('#yes'].onclick=()=>{};
-}
 async function init(){
-  // Template is executed before this deferred script, so all storefront elements exist here.
   if($('#search'))$('#search').oninput=renderProducts;
   if($('#sort'))$('#sort').onchange=renderProducts;
   if($('#cartOpen'))$('#cartOpen').onclick=openCart;
