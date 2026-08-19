@@ -1,0 +1,49 @@
+name: Build CELICOR product assets
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'assets/products-sprite128/**'
+      - '.github/workflows/build-product-assets.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-product-sprite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild optimized WebP sprite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          cat assets/products-sprite128/part-*.txt | tr -d '\r\n' | base64 --decode > assets/products-sprite.webp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('assets/products-sprite.webp')
+          data = p.read_bytes()
+          if len(data) < 1000 or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+              raise SystemExit('Invalid WebP sprite reconstructed from chunks')
+          print(f'Valid WebP: {len(data):,} bytes')
+          PY
+
+      - name: Commit generated asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets/products-sprite.webp
+          if git diff --cached --quiet; then
+            echo 'Sprite already up to date.'
+          else
+            git commit -m 'Build optimized CELICOR product image sprite [skip ci]'
+            git push origin HEAD:main
+          fi
