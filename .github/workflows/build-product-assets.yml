@@ -12,14 +12,14 @@ permissions:
 
 concurrency:
   group: celicor-product-assets
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-assets:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -28,62 +28,39 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p assets
-          cat assets/products-sprite128/part-*.txt | tr -d '\r\n' | base64 --decode > assets/products-sprite.webp
+
+          mapfile -t PARTS < <(find assets/products-sprite128 -maxdepth 1 -type f -name 'part-??.txt' | sort)
+          if [ "${#PARTS[@]}" -ne 14 ]; then
+            echo "Expected 14 sprite chunks, found ${#PARTS[@]}"
+            printf '%s\n' "${PARTS[@]}"
+            exit 1
+          fi
+
+          cat "${PARTS[@]}" | tr -d '\r\n ' | base64 --decode > assets/products-sprite.webp
+
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('assets/products-sprite.webp')
-          d=p.read_bytes()
-          if len(d)<1000 or d[:4]!=b'RIFF' or d[8:12]!=b'WEBP':
-              raise SystemExit('Invalid product WebP')
-          print(f'Product sprite: {len(d):,} bytes')
+          p = Path('assets/products-sprite.webp')
+          d = p.read_bytes()
+          if len(d) < 1000:
+              raise SystemExit(f'Product sprite too small: {len(d)} bytes')
+          if d[:4] != b'RIFF' or d[8:12] != b'WEBP':
+              raise SystemExit('Invalid product WebP header')
+          print(f'Valid product sprite: {len(d):,} bytes')
           PY
 
-      - name: Download premium hero bottles
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet pillow
-          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://www.eurodrinks.it/wp-content/uploads/2021/08/SANTATERESA1976OK1.png' -o /tmp/santa.png
-          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://cdn.shopify.com/s/files/1/0276/6290/9518/files/ron-diplomatico-rum-diplomatico-reserva-exclusiva-rum-750ml-31515685060701_480x480.png' -o /tmp/diplo.png
-          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://media.falabella.com/falabellaCL/128529221_01/w%3D1500%2Ch%3D1500%2Cfit%3Dcover' -o /tmp/pampero.jpg
-          python3 - <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          def prep(src,dst,max_h=900):
-              im=Image.open(src).convert('RGBA')
-              px=im.load()
-              for y in range(im.height):
-                  for x in range(im.width):
-                      r,g,b,a=px[x,y]
-                      m=min(r,g,b)
-                      if m>=248:
-                          px[x,y]=(r,g,b,0)
-                      elif m>=235:
-                          alpha=int(a*(248-m)/13)
-                          px[x,y]=(r,g,b,alpha)
-              box=im.getbbox()
-              if box: im=im.crop(box)
-              if im.height>max_h:
-                  w=round(im.width*max_h/im.height)
-                  im=im.resize((w,max_h),Image.Resampling.LANCZOS)
-              im.save(dst,'WEBP',quality=90,method=6)
-              print(dst, im.size)
-          prep('/tmp/santa.png','assets/hero-santa-teresa.webp')
-          prep('/tmp/diplo.png','assets/hero-diplomatico.webp')
-          prep('/tmp/pampero.jpg','assets/hero-pampero.webp')
-          PY
-
-      - name: Commit generated assets
+      - name: Commit generated product sprite
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add assets/products-sprite.webp assets/hero-santa-teresa.webp assets/hero-diplomatico.webp assets/hero-pampero.webp
+          git add assets/products-sprite.webp
+
           if git diff --cached --quiet; then
-            echo 'Assets already up to date.'
-          else
-            git commit -m 'Build CELICOR local product and hero images [skip ci]'
-            git pull --rebase origin main
-            git push origin HEAD:main
+            echo 'Product sprite already up to date.'
+            exit 0
           fi
+
+          git commit -m 'Build CELICOR product sprite [skip ci]'
+          git push origin HEAD:main
