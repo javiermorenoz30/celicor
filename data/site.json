@@ -1,0 +1,18 @@
+{
+  "business": "CELICOR La Castellana",
+  "whatsapp": "584242583500",
+  "phone": "+582122634948",
+  "address": "Av. Blandín con Calle Mata de Coco, La Castellana, Caracas",
+  "hero": {
+    "eyebrow": "TU CAVA, AHORA MÁS CERCA",
+    "titleLine1": "Elegancia para",
+    "titleLine2": "cada brindis.",
+    "description": "Descubre una selección de rones, vinos y destilados para comprar al detal o por caja desde CELICOR La Castellana.",
+    "primaryCta": "Comprar ahora",
+    "secondaryCta": "Ver selección"
+  },
+  "catalog": {
+    "headline": "Encuentra tu próxima botella.",
+    "currency": "USD"
+  }
+}
