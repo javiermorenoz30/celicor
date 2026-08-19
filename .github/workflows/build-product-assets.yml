@@ -23,30 +23,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rebuild product sprite
+      - name: Rebuild and validate product sprite
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p assets
 
-          mapfile -t PARTS < <(find assets/products-sprite128 -maxdepth 1 -type f -name 'part-??.txt' | sort)
-          if [ "${#PARTS[@]}" -ne 14 ]; then
-            echo "Expected 14 sprite chunks, found ${#PARTS[@]}"
-            printf '%s\n' "${PARTS[@]}"
-            exit 1
-          fi
-
-          cat "${PARTS[@]}" | tr -d '\r\n ' | base64 --decode > assets/products-sprite.webp
-
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('assets/products-sprite.webp')
-          d = p.read_bytes()
-          if len(d) < 1000:
-              raise SystemExit(f'Product sprite too small: {len(d)} bytes')
-          if d[:4] != b'RIFF' or d[8:12] != b'WEBP':
-              raise SystemExit('Invalid product WebP header')
-          print(f'Valid product sprite: {len(d):,} bytes')
+          import base64
+          import re
+
+          parts = sorted(Path('assets/products-sprite128').glob('part-??.txt'))
+          if len(parts) != 14:
+              raise SystemExit(f'Expected 14 sprite chunks, found {len(parts)}')
+
+          encoded = ''.join(p.read_text(encoding='utf-8') for p in parts)
+          encoded = re.sub(r'\s+', '', encoded)
+
+          # Read only enough Base64 to inspect the WebP RIFF header. The chunk
+          # directory contains trailing legacy data after the valid first WebP,
+          # so decoding the entire concatenated string is intentionally avoided.
+          header = base64.b64decode(encoded[:40])
+          if header[:4] != b'RIFF' or header[8:12] != b'WEBP':
+              raise SystemExit('Invalid WebP RIFF header in sprite chunks')
+
+          riff_size = int.from_bytes(header[4:8], 'little') + 8
+          needed_b64 = ((riff_size + 2) // 3) * 4
+          if len(encoded) < needed_b64:
+              raise SystemExit(f'Incomplete sprite: need {needed_b64} Base64 chars, found {len(encoded)}')
+
+          data = base64.b64decode(encoded[:needed_b64], validate=True)[:riff_size]
+          if len(data) != riff_size:
+              raise SystemExit(f'Incorrect decoded size: {len(data)} != {riff_size}')
+          if data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+              raise SystemExit('Decoded file is not WebP')
+
+          width = height = None
+          if data[12:16] == b'VP8X' and len(data) >= 30:
+              width = 1 + int.from_bytes(data[24:27], 'little')
+              height = 1 + int.from_bytes(data[27:30], 'little')
+
+          Path('assets/products-sprite.webp').write_bytes(data)
+          print(f'Valid CELICOR product sprite: {riff_size:,} bytes, {width}x{height}')
+
+          # Current catalog sprite is a 10-column x 11-row sheet of 128px cells.
+          if (width, height) != (1280, 1408):
+              raise SystemExit(f'Unexpected sprite dimensions: {width}x{height}; expected 1280x1408')
           PY
 
       - name: Commit generated product sprite
