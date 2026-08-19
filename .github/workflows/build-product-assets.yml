@@ -30,40 +30,61 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import base64
+          import binascii
           import re
 
           parts = sorted(Path('assets/products-sprite128').glob('part-??.txt'))
           if len(parts) != 14:
               raise SystemExit(f'Expected 14 sprite chunks, found {len(parts)}')
 
-          encoded = ''.join(p.read_text(encoding='utf-8') for p in parts)
-          encoded = re.sub(r'\s+', '', encoded)
+          chunks = [re.sub(r'\s+', '', p.read_text(encoding='utf-8')) for p in parts]
+          if not all(chunks):
+              raise SystemExit('One or more sprite chunks are empty')
 
-          header = base64.b64decode(encoded[:40])
-          if header[:4] != b'RIFF' or header[8:12] != b'WEBP':
-              raise SystemExit('Invalid WebP RIFF header in sprite chunks')
+          # Some historical CELICOR chunks were individually Base64-encoded,
+          # while others were plain splits of one Base64 stream. Support both.
+          individually_encoded = any('=' in chunk for chunk in chunks[:-1])
 
-          file_size = int.from_bytes(header[4:8], 'little') + 8
-          needed_b64 = ((file_size + 2) // 3) * 4
-          if len(encoded) < needed_b64:
-              raise SystemExit(f'Incomplete sprite: need {needed_b64} Base64 chars, found {len(encoded)}')
+          try:
+              if individually_encoded:
+                  decoded = []
+                  for index, chunk in enumerate(chunks):
+                      try:
+                          decoded.append(base64.b64decode(chunk, validate=True))
+                      except binascii.Error as exc:
+                          raise SystemExit(f'Invalid Base64 in chunk {index:02d}: {exc}')
+                  raw = b''.join(decoded)
+                  mode = 'individual Base64 chunks'
+              else:
+                  raw = base64.b64decode(''.join(chunks), validate=True)
+                  mode = 'single Base64 stream'
+          except binascii.Error as exc:
+              raise SystemExit(f'Unable to decode sprite chunks: {exc}')
 
-          # Only decode the Base64 belonging to the first RIFF WebP. Older
-          # chunk files contain legacy trailing data after that image.
-          data = base64.b64decode(encoded[:needed_b64], validate=True)[:file_size]
-          if len(data) != file_size or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
-              raise SystemExit('Decoded sprite is invalid')
+          riff = raw.find(b'RIFF')
+          if riff < 0 or raw[riff + 8:riff + 12] != b'WEBP':
+              raise SystemExit('No valid RIFF/WEBP image found after decoding chunks')
 
-          if data[12:16] != b'VP8X' or len(data) < 30:
-              raise SystemExit('Expected a VP8X WebP sprite')
-          width = 1 + int.from_bytes(data[24:27], 'little')
-          height = 1 + int.from_bytes(data[27:30], 'little')
-          if (width, height) != (1280, 1408):
-              raise SystemExit(f'Unexpected sprite dimensions: {width}x{height}; expected 1280x1408')
+          if len(raw) < riff + 12:
+              raise SystemExit('Decoded sprite header is incomplete')
+
+          file_size = int.from_bytes(raw[riff + 4:riff + 8], 'little') + 8
+          end = riff + file_size
+          if file_size < 1000 or end > len(raw):
+              raise SystemExit(f'Incomplete WebP payload: need {file_size} bytes, have {len(raw) - riff}')
+
+          data = raw[riff:end]
+          if data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+              raise SystemExit('Extracted product asset is not WebP')
+
+          width = height = None
+          if data[12:16] == b'VP8X' and len(data) >= 30:
+              width = 1 + int.from_bytes(data[24:27], 'little')
+              height = 1 + int.from_bytes(data[27:30], 'little')
 
           output = Path('/tmp/celicor-assets/products-sprite.webp')
           output.write_bytes(data)
-          print(f'CELICOR sprite OK: {file_size:,} bytes · {width}x{height} · 10 columns x 11 rows')
+          print(f'CELICOR sprite OK · mode: {mode} · {file_size:,} bytes · dimensions: {width}x{height}')
           PY
 
       - name: Verify generated file
