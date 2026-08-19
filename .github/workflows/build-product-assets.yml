@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-product-sprite:
+  build-assets:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rebuild optimized WebP sprite
+      - name: Rebuild product sprite
         shell: bash
         run: |
           set -euo pipefail
@@ -31,24 +31,59 @@ jobs:
           cat assets/products-sprite128/part-*.txt | tr -d '\r\n' | base64 --decode > assets/products-sprite.webp
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('assets/products-sprite.webp')
-          data = p.read_bytes()
-          if len(data) < 1000 or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
-              raise SystemExit('Invalid WebP sprite reconstructed from chunks')
-          print(f'Valid WebP: {len(data):,} bytes')
+          p=Path('assets/products-sprite.webp')
+          d=p.read_bytes()
+          if len(d)<1000 or d[:4]!=b'RIFF' or d[8:12]!=b'WEBP':
+              raise SystemExit('Invalid product WebP')
+          print(f'Product sprite: {len(d):,} bytes')
           PY
 
-      - name: Commit generated asset
+      - name: Download premium hero bottles
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://www.eurodrinks.it/wp-content/uploads/2021/08/SANTATERESA1976OK1.png' -o /tmp/santa.png
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://cdn.shopify.com/s/files/1/0276/6290/9518/files/ron-diplomatico-rum-diplomatico-reserva-exclusiva-rum-750ml-31515685060701_480x480.png' -o /tmp/diplo.png
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://media.falabella.com/falabellaCL/128529221_01/w%3D1500%2Ch%3D1500%2Cfit%3Dcover' -o /tmp/pampero.jpg
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          def prep(src,dst,max_h=900):
+              im=Image.open(src).convert('RGBA')
+              px=im.load()
+              for y in range(im.height):
+                  for x in range(im.width):
+                      r,g,b,a=px[x,y]
+                      m=min(r,g,b)
+                      if m>=248:
+                          px[x,y]=(r,g,b,0)
+                      elif m>=235:
+                          alpha=int(a*(248-m)/13)
+                          px[x,y]=(r,g,b,alpha)
+              box=im.getbbox()
+              if box: im=im.crop(box)
+              if im.height>max_h:
+                  w=round(im.width*max_h/im.height)
+                  im=im.resize((w,max_h),Image.Resampling.LANCZOS)
+              im.save(dst,'WEBP',quality=90,method=6)
+              print(dst, im.size)
+          prep('/tmp/santa.png','assets/hero-santa-teresa.webp')
+          prep('/tmp/diplo.png','assets/hero-diplomatico.webp')
+          prep('/tmp/pampero.jpg','assets/hero-pampero.webp')
+          PY
+
+      - name: Commit generated assets
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add assets/products-sprite.webp
+          git add assets/products-sprite.webp assets/hero-santa-teresa.webp assets/hero-diplomatico.webp assets/hero-pampero.webp
           if git diff --cached --quiet; then
-            echo 'Sprite already up to date.'
+            echo 'Assets already up to date.'
           else
-            git commit -m 'Build optimized CELICOR product image sprite [skip ci]'
+            git commit -m 'Build CELICOR local product and hero images [skip ci]'
             git pull --rebase origin main
             git push origin HEAD:main
           fi
