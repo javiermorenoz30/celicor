@@ -8,7 +8,7 @@ on:
       - '.github/workflows/build-product-assets.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: celicor-product-assets
@@ -20,14 +20,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Rebuild and validate product sprite
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p assets
+          mkdir -p /tmp/celicor-assets
 
           python3 - <<'PY'
           from pathlib import Path
@@ -41,49 +39,37 @@ jobs:
           encoded = ''.join(p.read_text(encoding='utf-8') for p in parts)
           encoded = re.sub(r'\s+', '', encoded)
 
-          # Read only enough Base64 to inspect the WebP RIFF header. The chunk
-          # directory contains trailing legacy data after the valid first WebP,
-          # so decoding the entire concatenated string is intentionally avoided.
           header = base64.b64decode(encoded[:40])
           if header[:4] != b'RIFF' or header[8:12] != b'WEBP':
               raise SystemExit('Invalid WebP RIFF header in sprite chunks')
 
-          riff_size = int.from_bytes(header[4:8], 'little') + 8
-          needed_b64 = ((riff_size + 2) // 3) * 4
+          file_size = int.from_bytes(header[4:8], 'little') + 8
+          needed_b64 = ((file_size + 2) // 3) * 4
           if len(encoded) < needed_b64:
               raise SystemExit(f'Incomplete sprite: need {needed_b64} Base64 chars, found {len(encoded)}')
 
-          data = base64.b64decode(encoded[:needed_b64], validate=True)[:riff_size]
-          if len(data) != riff_size:
-              raise SystemExit(f'Incorrect decoded size: {len(data)} != {riff_size}')
-          if data[:4] != b'RIFF' or data[8:12] != b'WEBP':
-              raise SystemExit('Decoded file is not WebP')
+          # Only decode the Base64 belonging to the first RIFF WebP. Older
+          # chunk files contain legacy trailing data after that image.
+          data = base64.b64decode(encoded[:needed_b64], validate=True)[:file_size]
+          if len(data) != file_size or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+              raise SystemExit('Decoded sprite is invalid')
 
-          width = height = None
-          if data[12:16] == b'VP8X' and len(data) >= 30:
-              width = 1 + int.from_bytes(data[24:27], 'little')
-              height = 1 + int.from_bytes(data[27:30], 'little')
-
-          Path('assets/products-sprite.webp').write_bytes(data)
-          print(f'Valid CELICOR product sprite: {riff_size:,} bytes, {width}x{height}')
-
-          # Current catalog sprite is a 10-column x 11-row sheet of 128px cells.
+          if data[12:16] != b'VP8X' or len(data) < 30:
+              raise SystemExit('Expected a VP8X WebP sprite')
+          width = 1 + int.from_bytes(data[24:27], 'little')
+          height = 1 + int.from_bytes(data[27:30], 'little')
           if (width, height) != (1280, 1408):
               raise SystemExit(f'Unexpected sprite dimensions: {width}x{height}; expected 1280x1408')
+
+          output = Path('/tmp/celicor-assets/products-sprite.webp')
+          output.write_bytes(data)
+          print(f'CELICOR sprite OK: {file_size:,} bytes · {width}x{height} · 10 columns x 11 rows')
           PY
 
-      - name: Commit generated product sprite
+      - name: Verify generated file
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add assets/products-sprite.webp
-
-          if git diff --cached --quiet; then
-            echo 'Product sprite already up to date.'
-            exit 0
-          fi
-
-          git commit -m 'Build CELICOR product sprite [skip ci]'
-          git push origin HEAD:main
+          test -s /tmp/celicor-assets/products-sprite.webp
+          file /tmp/celicor-assets/products-sprite.webp
+          echo 'CELICOR product asset validation completed successfully.'
