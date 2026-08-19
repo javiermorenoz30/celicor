@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: celicor-product-assets
+  cancel-in-progress: false
+
 jobs:
   build-product-sprite:
     runs-on: ubuntu-latest
@@ -45,5 +49,6 @@ jobs:
             echo 'Sprite already up to date.'
           else
             git commit -m 'Build optimized CELICOR product image sprite [skip ci]'
+            git pull --rebase origin main
             git push origin HEAD:main
           fi
